@@ -1,4 +1,4 @@
-// Jellytriggers — pane bundle for the Jellyfin web client.
+// Jellytriggers - pane bundle for the Jellyfin web client.
 // Loaded by File Transformation injecting <script src="/Plugins/Jellytriggers/script.js">
 // into index.html.
 //
@@ -15,6 +15,9 @@
     var STYLE_HREF = '/Plugins/Jellytriggers/style.css';
     var TRIGGERS_PATH = 'Plugins/Jellytriggers/triggers/';
     var DTDD_BASE = 'https://www.doesthedogdie.com/media/';
+    // Bumped whenever the JS changes - ensures proxies and browsers treat
+    // the trigger GET as a new URL and cannot serve a stale cached response.
+    var CACHE_BUST = '3';
 
     /** Current item being shown, so we don't re-fetch every tick. */
     var lastItemId = null;
@@ -23,6 +26,7 @@
 
     // ---- bootstrapping ------------------------------------------------------
 
+    console.log('[JT] Jellytriggers script loaded (v0.1.0.11)');
     injectStylesheet();
     window.addEventListener('hashchange', maybeUpdate);
     window.addEventListener('popstate', maybeUpdate);
@@ -39,7 +43,14 @@
     // ---- core loop ----------------------------------------------------------
 
     function maybeUpdate() {
+        var hash = window.location.hash || '';
         var itemId = readItemIdFromUrl();
+
+        // Diagnostic: log whenever we're on something that looks like a detail page.
+        if (hash.indexOf('details') >= 0 || hash.indexOf('item') >= 0 || itemId) {
+            console.log('[JT] maybeUpdate hash=' + hash + ' itemId=' + itemId);
+        }
+
         if (!itemId) {
             lastItemId = null;
             return;
@@ -53,6 +64,7 @@
         var slot = ensureSlot();
         if (!slot) {
             // The detail page hasn't fully rendered yet; we'll catch the next tick.
+            console.log('[JT] ensureSlot returned null - detail page not ready yet');
             return;
         }
 
@@ -111,7 +123,7 @@
         refresh.setAttribute('type', 'button');
         refresh.setAttribute('title', 'Re-check doesthedogdie.com');
         refresh.setAttribute('aria-label', 'Refresh triggers');
-        refresh.innerHTML = '↻'; // ↻
+        refresh.innerHTML = '↻';
         refresh.addEventListener('click', function () {
             loadAndRender(slot, itemId, /*forceRefresh*/ true);
         });
@@ -127,10 +139,10 @@
             body.appendChild(renderKeyMissing());
         } else if (state === 'NotOnDoesTheDogDie') {
             body.appendChild(renderInfo(
-                'This title isn’t on doesthedogdie.com yet. Add it there and refresh.'));
+                "This title isn't on doesthedogdie.com yet. Add it there and refresh."));
         } else if (state === 'UserHasNoFavorites') {
             body.appendChild(renderInfo(
-                'No favorites you’ve marked on doesthedogdie.com apply to this movie.'));
+                "No favorites you've marked on doesthedogdie.com apply to this movie."));
         } else if (payload) {
             body.appendChild(renderItems(payload.Items || [], payload.DtddMediaId));
         } else {
@@ -141,11 +153,49 @@
     }
 
     function renderItems(items, mediaId) {
-        var list = el('ul', 'jt-list');
         if (!items.length) {
             return text(el('div', 'jt-empty'), 'No matches.');
         }
 
+        // Split into yes-verdict (shown by default) and the rest (hidden behind toggle).
+        // Paywalled items go in the "rest" group since we can't determine their verdict.
+        var yesItems  = items.filter(function (i) { return !i.Paywalled && i.YesSum > i.NoSum; });
+        var restItems = items.filter(function (i) { return  i.Paywalled || i.YesSum <= i.NoSum; });
+
+        var container = el('div', 'jt-items-container');
+
+        // If nothing has a Yes verdict, just show everything.
+        if (!yesItems.length) {
+            container.appendChild(buildList(items, mediaId));
+            return container;
+        }
+
+        container.appendChild(buildList(yesItems, mediaId));
+
+        if (restItems.length) {
+            var restList = buildList(restItems, mediaId);
+            restList.style.display = 'none';
+
+            var toggle = el('button', 'jt-show-more');
+            toggle.type = 'button';
+            toggle.textContent = 'Show ' + restItems.length + ' more';
+            toggle.addEventListener('click', function () {
+                var hidden = restList.style.display === 'none';
+                restList.style.display = hidden ? '' : 'none';
+                toggle.textContent = hidden
+                    ? 'Show less'
+                    : 'Show ' + restItems.length + ' more';
+            });
+
+            container.appendChild(toggle);
+            container.appendChild(restList);
+        }
+
+        return container;
+    }
+
+    function buildList(items, mediaId) {
+        var list = el('ul', 'jt-list');
         items.forEach(function (item) {
             var li = el('li', 'jt-item');
 
@@ -172,7 +222,7 @@
         if (item.Paywalled) {
             var locked = el('span', 'jt-verdict jt-paywalled');
             locked.setAttribute('title', 'Paywalled on doesthedogdie.com');
-            locked.textContent = '🔒'; // 🔒
+            locked.textContent = '🔒';
             return locked;
         }
 
@@ -182,7 +232,7 @@
         verdict.textContent = yes > no ? 'Yes' : 'No';
 
         var counts = el('span', 'jt-counts');
-        counts.textContent = yes + ' – ' + no; // y – n
+        counts.textContent = yes + ' – ' + no;
         var wrap = el('span', 'jt-verdict-wrap');
         wrap.appendChild(verdict);
         wrap.appendChild(counts);
@@ -192,17 +242,58 @@
     function renderKeyMissing() {
         var box = el('div', 'jt-state jt-state-key');
         box.appendChild(text(el('p'),
-            'You haven’t connected a Does The Dog Die API key yet.'));
+            'Connect your Does The Dog Die API key to see your triggers.'));
+
         var p = el('p');
-        p.appendChild(document.createTextNode('Get one from '));
+        p.appendChild(document.createTextNode('Get a free key from '));
         var link = el('a');
         link.href = 'https://www.doesthedogdie.com/api';
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'doesthedogdie.com/api';
         p.appendChild(link);
-        p.appendChild(document.createTextNode(', then add it on your user settings.'));
+        p.appendChild(document.createTextNode(', then paste it below.'));
         box.appendChild(p);
+
+        var form = el('div', 'jt-key-form');
+
+        var input = el('input', 'jt-key-input');
+        input.type = 'text';
+        input.placeholder = 'Paste your DTDD API key...';
+        input.setAttribute('aria-label', 'DTDD API key');
+        form.appendChild(input);
+
+        var status = el('span', 'jt-key-status');
+        form.appendChild(status);
+
+        var btn = el('button', 'jt-key-save');
+        btn.type = 'button';
+        btn.textContent = 'Save key';
+        btn.addEventListener('click', function () {
+            var val = input.value.trim();
+            if (!val) { return; }
+            btn.disabled = true;
+            status.textContent = 'Saving...';
+            getApiClient().then(function (apiClient) {
+                var url = apiClient.getUrl('Plugins/Jellytriggers/key');
+                return apiClient.ajax({
+                    url: url,
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ apiKey: val }),
+                });
+            }).then(function () {
+                status.textContent = '';
+                // Key saved - trigger a fresh load so the pane renders triggers.
+                lastItemId = null;
+                maybeUpdate();
+            }).catch(function (err) {
+                btn.disabled = false;
+                status.textContent = 'Error: ' + (err && err.status ? 'HTTP ' + err.status : 'request failed');
+            });
+        });
+        form.appendChild(btn);
+        box.appendChild(form);
         return box;
     }
 
@@ -214,7 +305,7 @@
         clear(slot);
         var pane = el('section', 'jt-pane jt-loading');
         pane.appendChild(text(el('div', 'jt-pane-title'), 'Your triggers'));
-        pane.appendChild(text(el('div', 'jt-loading-dot'), '…')); // …
+        pane.appendChild(text(el('div', 'jt-loading-dot'), '...'));
         slot.appendChild(pane);
     }
 
@@ -222,7 +313,7 @@
         clear(slot);
         var pane = el('section', 'jt-pane jt-error');
         pane.appendChild(text(el('div', 'jt-pane-title'), 'Your triggers'));
-        pane.appendChild(text(el('div'), 'Couldn’t load: ' + (err && err.message ? err.message : err)));
+        pane.appendChild(text(el('div'), "Couldn't load: " + (err && err.message ? err.message : err)));
         slot.appendChild(pane);
     }
 
@@ -232,6 +323,8 @@
         // Locate the visible item-detail page. Jellyfin marks inactive pages with
         // .hide so we filter those out.
         var pages = document.querySelectorAll('.itemDetailPage');
+        console.log('[JT] ensureSlot: .itemDetailPage count=' + pages.length);
+
         var visible = null;
         for (var i = 0; i < pages.length; i++) {
             if (!pages[i].classList.contains('hide')) {
@@ -241,15 +334,15 @@
         }
 
         if (!visible) {
+            // Log all page-like elements so we can see what Jellyfin uses in this version.
+            var allPages = document.querySelectorAll('[class*="detailPage"], [class*="DetailPage"], [data-role="page"]');
+            var classes = [];
+            for (var j = 0; j < allPages.length; j++) {
+                classes.push(allPages[j].className);
+            }
+            console.log('[JT] No visible .itemDetailPage. Candidates:', classes.join(' | ') || '(none)');
             return null;
         }
-
-        // Detail pages aren't only for movies — make sure we're looking at one.
-        // The cheap signal is the URL itself; the body of the SPA hash will have
-        // serverId and id, but the page DOM is shared across content types.
-        // We rely on the controller returning NotOnDoesTheDogDie for non-movies,
-        // so the worst case for, say, a TV episode page is a tiny "not on DTDD"
-        // pane. That's fine for v1.
 
         var existingSlot = visible.querySelector('.jt-slot');
         if (existingSlot) {
@@ -260,6 +353,7 @@
         var primary = visible.querySelector('.detailPagePrimaryContent')
                    || visible.querySelector('.detailPageContent')
                    || visible;
+        console.log('[JT] Inserting slot into:', primary.className || primary.tagName);
         primary.appendChild(slot);
         return slot;
     }
@@ -269,11 +363,16 @@
     function fetchTriggers(itemId, forceRefresh) {
         return getApiClient().then(function (apiClient) {
             var path = TRIGGERS_PATH + itemId + (forceRefresh ? '/refresh' : '');
-            var url = apiClient.getUrl(path);
+            // Append cache-bust param on GET only; POST requests are never cached.
+            var url = apiClient.getUrl(path) + (forceRefresh ? '' : '?_v=' + CACHE_BUST);
+            console.log('[JT] fetch', forceRefresh ? 'POST' : 'GET', url);
             return apiClient.ajax({
                 url: url,
                 type: forceRefresh ? 'POST' : 'GET',
                 dataType: 'json',
+            }).then(function (data) {
+                console.log('[JT] response State=' + (data && data.State) + ' Items=' + (data && data.Items ? data.Items.length : 'n/a'));
+                return data;
             });
         });
     }

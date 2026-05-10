@@ -2,6 +2,7 @@ using Jellyfin.Plugin.Jellytriggers.Api;
 using Jellyfin.Plugin.Jellytriggers.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -28,8 +29,13 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // it carries no state of its own.
         serviceCollection.AddTransient<TriggerLookupService>();
 
-        // Background worker that registers our index.html injection with the
-        // File Transformation plugin (if installed) on server startup.
+        // Background worker that patches index.html on disk at startup.
         serviceCollection.AddHostedService<FileTransformationRegistration>();
+
+        // Rescue middleware: if File Transformation crashes serving /web/
+        // (due to its disposed-IServiceProvider bug), catch the exception and
+        // serve index.html directly from disk so Jellyfin stays functional.
+        serviceCollection.AddSingleton<IndexHtmlRescueMiddleware>();
+        serviceCollection.AddSingleton<IStartupFilter, IndexHtmlRescueFilter>();
     }
 }

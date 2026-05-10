@@ -170,3 +170,70 @@
 .jt-error {
     color: var(--jt-yes);
 }
+
+.jt-key-form {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5em;
+    margin-top: 0.6em;
+}
+
+.jt-key-input {
+    flex: 1 1 12em;
+    min-width: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--jt-border);
+    border-radius: var(--jt-radius);
+    color: inherit;
+    font-size: 0.9em;
+    padding: 0.4em 0.7em;
+    outline: none;
+}
+
+.jt-key-input:focus {
+    border-color: var(--jt-link);
+}
+
+.jt-key-save {
+    background: rgba(93, 185, 255, 0.15);
+    border: 1px solid var(--jt-link);
+    border-radius: var(--jt-radius);
+    color: var(--jt-link);
+    cursor: pointer;
+    font-size: 0.9em;
+    padding: 0.4em 0.9em;
+    white-space: nowrap;
+    transition: background 120ms ease;
+}
+
+.jt-key-save:hover {
+    background: rgba(93, 185, 255, 0.25);
+}
+
+.jt-key-save:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.jt-key-status {
+    color: var(--jt-muted);
+    font-size: 0.85em;
+}
+
+.jt-show-more {
+    background: transparent;
+    border: 1px solid var(--jt-border);
+    border-radius: 999px;
+    color: var(--jt-muted);
+    cursor: pointer;
+    font-size: 0.8em;
+    padding: 0.3em 0.9em;
+    margin-top: 0.5em;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.jt-show-more:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--jt-fg);
+}

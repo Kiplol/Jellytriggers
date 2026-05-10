@@ -41,10 +41,20 @@ public sealed class TriggerLookupService
     /// Returns the DTDD media id for <paramref name="item"/>, or <c>null</c>
     /// if the item isn't on DTDD (or the lookup fails). The result is cached.
     /// </summary>
+    /// <param name="item">The Jellyfin item to resolve.</param>
+    /// <param name="apiKey">The calling user's DTDD API key.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="forceRefresh">
+    /// When <c>true</c>, bypass the resolution cache and always hit the DTDD
+    /// search API. Use this when the caller has explicitly requested a full
+    /// re-resolve (e.g. the pane's Refresh button), so a previously-cached
+    /// "not found" entry doesn't block a fresh attempt.
+    /// </param>
     public async Task<int?> ResolveAsync(
         BaseItem item,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceRefresh = false)
     {
         ArgumentNullException.ThrowIfNull(item);
 
@@ -52,10 +62,17 @@ public sealed class TriggerLookupService
         var hitTtl = config?.ResolutionCacheHitTtlDays ?? 30;
         var missTtl = config?.ResolutionCacheMissTtlDays ?? 7;
 
-        if (_cache.TryGetResolution(item.Id, hitTtl, missTtl, out var cached))
+        if (!forceRefresh && _cache.TryGetResolution(item.Id, hitTtl, missTtl, out var cached))
         {
+            _logger.LogInformation(
+                "Jellytriggers: resolution cache hit for \"{Title}\" → dtddId={DtddId} (forceRefresh={Force})",
+                item.Name, cached, forceRefresh);
             return cached;
         }
+
+        _logger.LogInformation(
+            "Jellytriggers: cache miss for \"{Title}\" (forceRefresh={Force}) — going to DTDD",
+            item.Name, forceRefresh);
 
         var resolved = await DoLookupAsync(item, apiKey, cancellationToken).ConfigureAwait(false);
         if (resolved.HasValue)
@@ -85,67 +102,91 @@ public sealed class TriggerLookupService
         var imdbId = item.GetProviderId(MetadataProvider.Imdb);
         var year = item.ProductionYear;
 
+        _logger.LogInformation(
+            "Jellytriggers: resolving \"{Title}\" ({Year}) — Jellyfin tmdb={Tmdb} imdb={Imdb}",
+            title, year, tmdbId, imdbId);
+
         var search = await _client.SearchAsync(title, apiKey, cancellationToken).ConfigureAwait(false);
         if (search?.Items is not { Count: > 0 } results)
         {
-            _logger.LogDebug(
-                "Jellytriggers: DTDD search returned no items for {Title} ({Year})",
-                title,
-                year);
+            _logger.LogInformation(
+                "Jellytriggers: DTDD search returned no results for \"{Title}\"", title);
             return null;
         }
 
-        // 1. TMDB id match — most reliable.
-        if (tmdbId.HasValue)
+        _logger.LogInformation(
+            "Jellytriggers: DTDD returned {Count} candidates for \"{Title}\":", results.Count, title);
+        foreach (var r in results)
         {
-            var byTmdb = results.FirstOrDefault(r => r.TmdbId == tmdbId.Value && IsMovie(r));
-            if (byTmdb != null)
-            {
-                return byTmdb.Id;
-            }
+            _logger.LogInformation(
+                "  dtdd={DtddId} type={Type} name=\"{Name}\" year={Year} tmdb={Tmdb} imdb={Imdb}",
+                r.Id, r.ItemTypeName, r.Name, r.ReleaseYear, r.TmdbId, r.ImdbId);
         }
 
-        // 2. IMDb id match — IMDb ids are stable and rare to clash, so a
-        //    lower-cased exact compare is fine.
+        // 1. TMDB id match — most reliable. ID match is authoritative; skip type
+        //    filter because DTDD returns type=null for most entries.
+        if (tmdbId.HasValue)
+        {
+            var byTmdb = results.FirstOrDefault(r => r.TmdbId == tmdbId.Value);
+            if (byTmdb != null)
+            {
+                _logger.LogInformation(
+                    "Jellytriggers: matched \"{Title}\" via TMDB id {Tmdb} → dtdd={DtddId}",
+                    title, tmdbId, byTmdb.Id);
+                return byTmdb.Id;
+            }
+
+            _logger.LogInformation(
+                "Jellytriggers: no TMDB match for tmdb={Tmdb} ({Count} candidates)",
+                tmdbId, results.Count);
+        }
+
+        // 2. IMDb id match. Same reasoning — skip type filter.
         if (!string.IsNullOrEmpty(imdbId))
         {
             var byImdb = results.FirstOrDefault(
-                r => string.Equals(r.ImdbId, imdbId, StringComparison.OrdinalIgnoreCase) && IsMovie(r));
+                r => string.Equals(r.ImdbId, imdbId, StringComparison.OrdinalIgnoreCase));
             if (byImdb != null)
             {
+                _logger.LogInformation(
+                    "Jellytriggers: matched \"{Title}\" via IMDb id {Imdb} → dtdd={DtddId}",
+                    title, imdbId, byImdb.Id);
                 return byImdb.Id;
             }
+
+            _logger.LogInformation(
+                "Jellytriggers: no IMDb match for imdb={Imdb}", imdbId);
         }
 
-        // 3. Title + year fallback — only if the admin allows it. Useful for
-        //    items missing both TMDB and IMDb ids; risk is wrong-movie collisions
-        //    when titles aren't unique.
+        // 3. Title + year fallback — only if the admin allows it.
+        //    Accept null type because DTDD does not reliably populate it.
         if (Plugin.Instance?.Configuration?.AllowTitleSearchFallback == true && year.HasValue)
         {
             var byTitleYear = results.FirstOrDefault(r =>
-                IsMovie(r)
+                IsMovieOrUnknown(r)
                 && string.Equals(r.Name, title, StringComparison.OrdinalIgnoreCase)
                 && ParseYear(r.ReleaseYear) == year);
             if (byTitleYear != null)
             {
+                _logger.LogInformation(
+                    "Jellytriggers: matched \"{Title}\" via title+year fallback → dtdd={DtddId}",
+                    title, byTitleYear.Id);
                 return byTitleYear.Id;
             }
         }
 
-        _logger.LogDebug(
-            "Jellytriggers: no DTDD match for {Title} ({Year}) tmdb={Tmdb} imdb={Imdb} amongst {Count} candidates.",
-            title,
-            year,
-            tmdbId,
-            imdbId,
-            results.Count);
+        _logger.LogInformation(
+            "Jellytriggers: no match found for \"{Title}\" ({Year}) tmdb={Tmdb} imdb={Imdb} — {Count} candidates above",
+            title, year, tmdbId, imdbId, results.Count);
         return null;
     }
 
-    private static bool IsMovie(DtddItem item)
+    private static bool IsMovieOrUnknown(DtddItem item)
     {
-        // "Movie" is what DTDD returns; we ignore Series, Books, Video Games.
-        return string.Equals(item.ItemTypeName, "Movie", StringComparison.OrdinalIgnoreCase);
+        // Accept "Movie" or null/empty — DTDD does not reliably populate ItemTypeName.
+        // Explicit non-movie types (Series, Book, VideoGame, etc.) are excluded.
+        return string.IsNullOrEmpty(item.ItemTypeName)
+            || string.Equals(item.ItemTypeName, "Movie", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int? TryParseInt(string? raw)

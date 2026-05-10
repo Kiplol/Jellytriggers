@@ -1,9 +1,9 @@
 using System;
-using System.Linq;
-using System.Reflection;
-using System.Runtime.Loader;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Jellytriggers.Web;
+using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
@@ -11,42 +11,41 @@ using Newtonsoft.Json.Linq;
 namespace Jellyfin.Plugin.Jellytriggers.Services;
 
 /// <summary>
-/// Registers our <see cref="Web.IndexHtmlInjector"/> with the
-/// <c>jellyfin-plugin-file-transformation</c> plugin on startup, so the
-/// pane's script tag appears in the served <c>index.html</c> automatically.
+/// Injects our script tag into Jellyfin's <c>index.html</c> on startup via direct disk patch.
 /// </summary>
 /// <remarks>
-/// File Transformation can't be referenced as a normal NuGet/library — its
-/// author calls this out in the README — so we discover it at runtime via
-/// <see cref="AssemblyLoadContext.All"/> and invoke its <c>PluginInterface
-/// .RegisterTransformation</c> by reflection. If the plugin isn't installed,
-/// we log a friendly note and bail out; users still have the manual script
-/// tag fallback documented on the admin page.
+/// Uses <see cref="IApplicationPaths.WebPath"/> — Jellyfin's own interface for locating the
+/// jellyfin-web directory. This is correct in all Jellyfin deployments including Docker, where
+/// <c>IWebHostEnvironment.WebRootPath</c> is empty because Jellyfin configures static files
+/// via a custom file provider, not the standard ASP.NET web root.
+///
+/// We do NOT register with File Transformation. FT 2.5.9.0 persists registrations to disk and
+/// replays them across restarts. Its internal <c>IServiceProvider</c> is disposed after startup,
+/// so any invocation of a registered callback throws <see cref="ObjectDisposedException"/> on
+/// every <c>GET /web/</c> request. The direct disk patch is the correct injection mechanism.
 /// </remarks>
 public sealed class FileTransformationRegistration : IHostedService
 {
-    // A stable Guid so the FT plugin treats repeat registrations as updates,
-    // not duplicates. Don't change this casually.
-    private static readonly Guid TransformationId =
-        Guid.Parse("c1f6d2a8-43e1-4b30-8a8a-9f1cf7b6f5e1");
-
     private readonly ILogger<FileTransformationRegistration> _logger;
+    private readonly IApplicationPaths _appPaths;
 
-    public FileTransformationRegistration(ILogger<FileTransformationRegistration> logger)
+    public FileTransformationRegistration(
+        ILogger<FileTransformationRegistration> logger,
+        IApplicationPaths appPaths)
     {
         _logger = logger;
+        _appPaths = appPaths;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         try
         {
-            TryRegister();
+            PatchIndexHtmlDirectly();
         }
         catch (Exception ex)
         {
-            // Never let a registration miss bring down plugin startup.
-            _logger.LogWarning(ex, "Jellytriggers: failed to register File Transformation hook.");
+            _logger.LogWarning(ex, "Jellytriggers: direct index.html patch failed.");
         }
 
         return Task.CompletedTask;
@@ -54,57 +53,33 @@ public sealed class FileTransformationRegistration : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private void TryRegister()
+    private void PatchIndexHtmlDirectly()
     {
-        var fileTransformation = AssemblyLoadContext.All
-            .SelectMany(ctx => ctx.Assemblies)
-            .FirstOrDefault(asm => asm.FullName?.Contains(".FileTransformation", StringComparison.Ordinal) == true);
+        var webPath = _appPaths.WebPath;
+        if (string.IsNullOrEmpty(webPath))
+        {
+            _logger.LogWarning("Jellytriggers: IApplicationPaths.WebPath is empty; cannot locate index.html.");
+            return;
+        }
 
-        if (fileTransformation == null)
+        var indexPath = Path.Combine(webPath, "index.html");
+        if (!File.Exists(indexPath))
+        {
+            _logger.LogWarning("Jellytriggers: index.html not found at {Path}.", indexPath);
+            return;
+        }
+
+        var original = File.ReadAllText(indexPath);
+        var patched = IndexHtmlInjector.Transform(new JObject { ["contents"] = original });
+
+        if (string.Equals(patched, original, StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "Jellytriggers: File Transformation plugin not detected. Falling back to the manual script-tag install path.");
+                "Jellytriggers: index.html already contains current injection — no change needed.");
             return;
         }
 
-        var pluginInterface = fileTransformation
-            .GetType("Jellyfin.Plugin.FileTransformation.PluginInterface");
-        if (pluginInterface == null)
-        {
-            _logger.LogWarning(
-                "Jellytriggers: File Transformation is loaded but its PluginInterface type wasn't found. Plugin version may have changed; please file an issue.");
-            return;
-        }
-
-        var register = pluginInterface.GetMethod(
-            "RegisterTransformation",
-            BindingFlags.Public | BindingFlags.Static);
-        if (register == null)
-        {
-            _logger.LogWarning(
-                "Jellytriggers: File Transformation is loaded but RegisterTransformation method wasn't found.");
-            return;
-        }
-
-        // Use the callback approach. FT calls our method via reflection:
-        //   (string)method.Invoke(null, new object[] { paramObj })
-        // where paramObj is whatever it deserialized {"contents":"…"} into.
-        // The callback parameter MUST be JObject — a custom DTO causes a
-        // cross-AssemblyLoadContext type-identity failure (Newtonsoft can't
-        // instantiate our type in FT's context), which propagates past FT's
-        // middleware and breaks Jellyfin page-serving entirely.
-        // JObject is safe because Jellytriggers uses ExcludeAssets=runtime
-        // for Newtonsoft, sharing the host's assembly with FT.
-        var payload = new JObject
-        {
-            ["id"] = TransformationId.ToString("D"),
-            ["fileNamePattern"] = "index.html",
-            ["callbackAssembly"] = typeof(Web.IndexHtmlInjector).Assembly.FullName!,
-            ["callbackClass"] = typeof(Web.IndexHtmlInjector).FullName,
-            ["callbackMethod"] = nameof(Web.IndexHtmlInjector.Transform),
-        };
-
-        register.Invoke(null, new object?[] { payload });
-        _logger.LogInformation("Jellytriggers: registered index.html script injection with File Transformation.");
+        File.WriteAllText(indexPath, patched);
+        _logger.LogInformation("Jellytriggers: patched index.html at {Path}.", indexPath);
     }
 }

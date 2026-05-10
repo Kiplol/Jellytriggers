@@ -96,6 +96,20 @@ public sealed class TriggerCache
         SaveResolution();
     }
 
+    /// <summary>
+    /// Wipe every entry from the resolution cache. Useful after a code fix or
+    /// API change that may have written incorrect "not found" entries.
+    /// Returns the number of entries cleared.
+    /// </summary>
+    public int ClearResolutionCache()
+    {
+        EnsureLoaded();
+        var count = _resolution!.Count;
+        _resolution.Clear();
+        SaveResolution();
+        return count;
+    }
+
     // ---- Pane cache ((DTDD media id, user id) -> rendered payload) ---------
 
     public bool TryGetPane(int dtddMediaId, Guid userId, int ttlHours, out PanePayload? payload)

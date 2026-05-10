@@ -71,6 +71,7 @@ public class JellytriggersController : ControllerBase
             return Unauthorized();
         }
 
+        SetNoCacheHeaders();
         return await BuildPaneAsync(userId.Value, itemId, useCache: true, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -89,6 +90,7 @@ public class JellytriggersController : ControllerBase
             return Unauthorized();
         }
 
+        SetNoCacheHeaders();
         return await BuildPaneAsync(userId.Value, itemId, useCache: false, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -104,6 +106,25 @@ public class JellytriggersController : ControllerBase
         }
 
         var cleared = _cache.InvalidatePaneForUser(userId.Value);
+        return new RefreshAllResponse { Cleared = cleared };
+    }
+
+    /// <summary>
+    /// Clear every entry in the resolution cache (Jellyfin item → DTDD media id).
+    /// Use this after a plugin update or API issue may have written incorrect "not found"
+    /// entries. Individual lookups will re-resolve on next movie page visit.
+    /// </summary>
+    [HttpPost("resolution-cache/clear")]
+    public ActionResult<RefreshAllResponse> ClearResolutionCache()
+    {
+        var userId = GetCallingUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var cleared = _cache.ClearResolutionCache();
+        _logger.LogInformation("Jellytriggers: resolution cache cleared ({Count} entries).", cleared);
         return new RefreshAllResponse { Cleared = cleared };
     }
 
@@ -181,6 +202,10 @@ public class JellytriggersController : ControllerBase
             return NotFound();
         }
 
+        // no-store: neither the browser nor any proxy should cache this.
+        // The injected URL already includes ?v=<version> so the URL itself
+        // changes on every release, giving a fresh fetch without caching.
+        Response.Headers["Cache-Control"] = "no-store";
         return File(stream, "application/javascript");
     }
 
@@ -199,6 +224,9 @@ public class JellytriggersController : ControllerBase
             return NotFound();
         }
 
+        var version = typeof(JellytriggersController).Assembly.GetName().Version?.ToString() ?? "0";
+        Response.Headers["ETag"] = $"\"{version}\"";
+        Response.Headers["Cache-Control"] = "no-cache";
         return File(stream, "text/css");
     }
 
@@ -210,20 +238,31 @@ public class JellytriggersController : ControllerBase
         bool useCache,
         CancellationToken cancellationToken)
     {
+        _logger.LogInformation(
+            "Jellytriggers: BuildPane user={UserId} item={ItemId} useCache={UseCache}",
+            userId, itemId, useCache);
+
         var item = _library.GetItemById(itemId);
         if (item == null)
         {
+            _logger.LogInformation("Jellytriggers: item {ItemId} not found in library", itemId);
             return NotFound();
         }
 
         var apiKey = _keys.GetKey(userId);
         if (string.IsNullOrEmpty(apiKey))
         {
+            _logger.LogInformation("Jellytriggers: no API key for user {UserId} → KeyMissing", userId);
             return new PanePayload { State = PaneState.KeyMissing };
         }
 
+        _logger.LogInformation("Jellytriggers: key present for user {UserId}, resolving item \"{Title}\"",
+            userId, item.Name);
+
         // Resolve Jellyfin item -> DTDD media id (its own cache).
-        var mediaId = await _lookup.ResolveAsync(item, apiKey, cancellationToken).ConfigureAwait(false);
+        // When useCache is false (force refresh), also bypass the resolution cache
+        // so a previously-cached "not found" entry doesn't block a fresh lookup.
+        var mediaId = await _lookup.ResolveAsync(item, apiKey, cancellationToken, forceRefresh: !useCache).ConfigureAwait(false);
         if (mediaId is null)
         {
             return new PanePayload { State = PaneState.NotOnDoesTheDogDie };
@@ -278,6 +317,13 @@ public class JellytriggersController : ControllerBase
             NotName = topic?.NotName,
             SurvivesName = topic?.SurvivesName,
         };
+    }
+
+    /// <summary>Prevent reverse-proxies and browsers from caching personalised API responses.</summary>
+    private void SetNoCacheHeaders()
+    {
+        Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+        Response.Headers["Pragma"] = "no-cache";
     }
 
     private Guid? GetCallingUserId()
