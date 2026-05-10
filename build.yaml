@@ -5,7 +5,7 @@
 name: Jellytriggers
 guid: 58f13d24-a724-409e-a998-f2154ba986d4
 version: 0.1.0.0
-targetAbi: 10.11.3.0
+targetAbi: 10.11.8.0
 framework: net9.0
 owner: Kiplol
 category: General

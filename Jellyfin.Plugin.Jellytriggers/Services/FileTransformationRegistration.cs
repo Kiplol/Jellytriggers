@@ -90,7 +90,7 @@ public sealed class FileTransformationRegistration : IHostedService
         var payload = new JObject
         {
             ["id"] = TransformationId.ToString("D"),
-            ["fileNamePattern"] = "index\\.html$",
+            ["fileNamePattern"] = "index.html",
             ["callbackAssembly"] = ourAssemblyName,
             ["callbackClass"] = typeof(Web.IndexHtmlInjector).FullName,
             ["callbackMethod"] = nameof(Web.IndexHtmlInjector.Transform),

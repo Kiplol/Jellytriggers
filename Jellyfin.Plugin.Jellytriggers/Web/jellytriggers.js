@@ -70,11 +70,25 @@
         fetchTriggers(itemId, forceRefresh)
             .then(function (payload) {
                 inFlight = false;
-                renderPayload(slot, itemId, payload);
+                // Jellyfin's SPA may have re-rendered the detail page while the
+                // fetch was in flight, detaching our slot from the DOM. If so,
+                // grab a fresh slot so the render is visible.
+                var target = slot.isConnected ? slot : ensureSlot();
+                if (target) {
+                    renderPayload(target, itemId, payload);
+                } else {
+                    // Page is gone entirely; reset so the next tick retries.
+                    lastItemId = null;
+                }
             })
             .catch(function (err) {
                 inFlight = false;
-                renderError(slot, err);
+                var target = slot.isConnected ? slot : ensureSlot();
+                if (target) {
+                    renderError(target, err);
+                } else {
+                    lastItemId = null;
+                }
             });
     }
 
@@ -117,8 +131,10 @@
         } else if (state === 'UserHasNoFavorites') {
             body.appendChild(renderInfo(
                 'No favorites you’ve marked on doesthedogdie.com apply to this movie.'));
-        } else {
+        } else if (payload) {
             body.appendChild(renderItems(payload.Items || [], payload.DtddMediaId));
+        } else {
+            body.appendChild(renderInfo('No data returned from the server.'));
         }
 
         return body;

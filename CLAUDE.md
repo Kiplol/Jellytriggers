@@ -36,7 +36,7 @@ A short list of decisions and the reasoning, so we don't relitigate them.
   we used as a shape reference) follow this pattern. Distributed via a
   `manifest.json` repo URL the user adds in the Jellyfin dashboard.
   (NB: the template README still says .NET 8, but the current Jellyfin
-  10.11.3 NuGet packages target .NET 9; we follow the packages.)
+  10.11.8 NuGet packages target .NET 9; we follow the packages.)
 - **Per-user DTDD API keys.** Each Jellyfin user enters their own DTDD key.
   This is the right model because DTDD personalizes its responses per key
   (see "How DTDD personalization works" below) — using a single shared key

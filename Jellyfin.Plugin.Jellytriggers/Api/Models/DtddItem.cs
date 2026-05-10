@@ -5,9 +5,11 @@ namespace Jellyfin.Plugin.Jellytriggers.Api.Models;
 /// <summary>A media item (movie/show/etc.) as DTDD describes it.</summary>
 /// <remarks>
 /// DTDD uses two different casings for the TMDB id depending on endpoint
-/// (<c>tmdbid</c> on /dddsearch, <c>tmdbId</c> on /media). We only care
-/// about the canonical camelCase variant; the search endpoint setter is
-/// modeled separately if we need it.
+/// (<c>tmdbid</c> on /dddsearch, <c>tmdbId</c> on /media). Both are handled
+/// by a single property because the deserializer runs with
+/// <c>PropertyNameCaseInsensitive = true</c> — having two properties whose
+/// names differ only in case causes a collision and an
+/// <see cref="System.InvalidOperationException"/> at runtime.
 /// </remarks>
 public sealed class DtddItem
 {
@@ -24,15 +26,8 @@ public sealed class DtddItem
     public string? ItemTypeName { get; set; }
 
     [JsonPropertyName("tmdbId")]
-    public int? TmdbIdCamel { get; set; }
-
-    [JsonPropertyName("tmdbid")]
-    public int? TmdbIdLower { get; set; }
+    public int? TmdbId { get; set; }
 
     [JsonPropertyName("imdbId")]
     public string? ImdbId { get; set; }
-
-    /// <summary>TMDB id, regardless of which casing the endpoint used.</summary>
-    [JsonIgnore]
-    public int? TmdbId => TmdbIdCamel ?? TmdbIdLower;
 }
