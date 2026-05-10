@@ -7,10 +7,12 @@ namespace Jellyfin.Plugin.Jellytriggers.Web;
 /// flight to load our pane bundle.
 /// </summary>
 /// <remarks>
-/// File Transformation invokes this method by reflection (assembly + class +
-/// method names baked into the registration payload), passing a JObject
-/// whose <c>contents</c> property is the current state of the file. Our job
-/// is to swap that string for one with our <c>&lt;script&gt;</c> tag in it.
+/// FT invokes this by reflection. It does <c>obj.ToObject(parameterType)</c>
+/// to build the argument and casts the <em>return value</em> to string — the
+/// method must return the (possibly modified) HTML, not mutate the payload.
+/// Using <see cref="JObject"/> as the parameter type keeps everything in the
+/// same Newtonsoft assembly context as FT itself, avoiding the
+/// cross-AssemblyLoadContext deserialization failure that a custom DTO causes.
 /// </remarks>
 public static class IndexHtmlInjector
 {
@@ -19,37 +21,38 @@ public static class IndexHtmlInjector
         "<script defer src=\"/Plugins/Jellytriggers/script.js\"></script>";
 
     /// <summary>The exact contract File Transformation calls.</summary>
-    public static void Transform(JObject payload)
+    public static string Transform(JObject payload)
     {
-        var current = payload.Value<string>("contents");
-        if (string.IsNullOrEmpty(current) || current.Contains(Marker))
+        try
         {
-            return;
-        }
+            var current = payload?.Value<string>("contents") ?? string.Empty;
 
-        var injection = "    " + Marker + "\n    " + Snippet + "\n";
-        string modified;
+            if (string.IsNullOrEmpty(current) || current.Contains(Marker))
+            {
+                return current;
+            }
 
-        // Prefer injecting just before </body>; fall back to </head> for the
-        // edge case of an unusual web client that has no body close tag visible
-        // (some custom transformation chains rewrite around that).
-        var bodyIdx = current.LastIndexOf("</body>", System.StringComparison.OrdinalIgnoreCase);
-        if (bodyIdx >= 0)
-        {
-            modified = current.Insert(bodyIdx, injection);
-        }
-        else
-        {
+            var injection = "    " + Marker + "\n    " + Snippet + "\n";
+
+            // Prefer injecting just before </body>; fall back to </head>.
+            var bodyIdx = current.LastIndexOf("</body>", System.StringComparison.OrdinalIgnoreCase);
+            if (bodyIdx >= 0)
+            {
+                return current.Insert(bodyIdx, injection);
+            }
+
             var headIdx = current.LastIndexOf("</head>", System.StringComparison.OrdinalIgnoreCase);
             if (headIdx < 0)
             {
-                // No close tag — give up cleanly rather than corrupting the page.
-                return;
+                return current;
             }
 
-            modified = current.Insert(headIdx, injection);
+            return current.Insert(headIdx, injection);
         }
-
-        payload["contents"] = modified;
+        catch
+        {
+            // Never let a transform failure break page serving.
+            return payload?.Value<string>("contents") ?? string.Empty;
+        }
     }
 }

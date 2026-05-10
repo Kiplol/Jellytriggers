@@ -9,6 +9,123 @@ contradicts the code, the code wins — and please update this file.
 
 ---
 
+## Current status (as of 2026-05-10)
+
+The plugin compiles and was deployed once. The core API (triggers, key
+management) works. The File Transformation integration has been fully debugged
+and the code is now correct, but **the last-built DLL in the release directory
+predates the final fixes** — the next task is to do a clean build and deploy
+it.
+
+### What is fixed and ready to build
+
+- **`Api/Models/DtddItem.cs`** — Two JSON property names differing only in
+  case (`tmdbId` / `tmdbid`) caused `InvalidOperationException` under
+  `PropertyNameCaseInsensitive = true`. Collapsed to a single `TmdbId` with
+  `[JsonPropertyName("tmdbId")]`. The API now responds correctly.
+
+- **`Web/IndexHtmlInjector.cs`** — The callback was `void` and mutated the
+  payload object. File Transformation calls our method via reflection as
+  `(string)method.Invoke(null, new object[] { paramObj })` — mutation is
+  ignored, and a void method returns `null`. FT then crashed on the null
+  result. Fixed: method now returns `string` (the modified HTML) and wraps
+  everything in a try/catch that returns the original HTML on any error.
+
+- **`Web/jellytriggers.js`** — Two bugs:
+  1. Stale slot reference: the `slot` variable captured before the async
+     fetch could be detached from the DOM by Jellyfin's SPA by the time the
+     fetch resolves. Fixed by checking `slot.isConnected` on resolution and
+     falling back to `ensureSlot()`.
+  2. Null payload crash in `renderBody`: the final `else` branch called
+     `payload.Items` without checking `payload` first. Fixed with an explicit
+     `else if (payload)` guard.
+
+### What is NOT yet done
+
+- **Build and deploy.** The release directory has the old broken DLL.
+  Do a clean build and copy the new DLL to the release directory, then deploy
+  to the Jellyfin server. See "Build / dev workflow" below.
+
+- **Verify FT injection end-to-end.** After deploying, open a movie, open
+  DevTools → Network, and confirm `script.js` appears. If it does, the pane
+  should render. If not, check the Jellyfin log for
+  `"registered index.html script injection"` — if that line is missing, File
+  Transformation wasn't detected.
+
+---
+
+## File Transformation integration — hard-won learnings
+
+This section records everything figured out about the FT callback contract.
+Do not change any of it without re-reading all of this.
+
+### How FT invokes our callback
+
+FT discovers our method by reflection and calls it as:
+
+```csharp
+(string)method.Invoke(null, new object[] { paramObj })
+```
+
+where `paramObj` is the result of `JObject.ToObject(paramType)` applied to the
+JSON `{"contents": "<full index.html>"}`.
+
+Two rules flow from this:
+
+1. **The method must return `string`** (the possibly-modified HTML). Returning
+   void gives FT a null, which it tries to use and crashes on. The crash is
+   caught by FT's middleware, the page loads but the injection never happens.
+
+2. **The parameter type must be `JObject`** (from Newtonsoft.Json.Linq).
+   Using a custom DTO (e.g. `FtPayload`) causes Newtonsoft in FT's
+   AssemblyLoadContext to fail constructing the type because it belongs to a
+   different load context. This exception is NOT caught by FT's middleware —
+   it propagates to Jellyfin's request pipeline and causes **"Error processing
+   request."** for every page load, breaking Jellyfin entirely.
+   `JObject` is safe because Jellytriggers uses `ExcludeAssets=runtime` for
+   Newtonsoft, so both plugins share the same host assembly instance.
+
+The correct signature is therefore:
+
+```csharp
+public static string Transform(JObject payload)
+```
+
+`Api/Models/FtPayload.cs` exists in the project as dead code from an
+experiment. It is not used and is harmless as-is, but can be deleted.
+
+### File name pattern
+
+The `fileNamePattern` field in the registration payload must be `"index.html"`
+— a plain string match, not a regex. Using a regex like `"index\\.html$"` does
+not match because FT does literal/string matching for non-`.*` patterns.
+
+### Registration payload shape
+
+```csharp
+var payload = new JObject
+{
+    ["id"] = TransformationId.ToString("D"),   // stable Guid, do not change
+    ["fileNamePattern"] = "index.html",
+    ["callbackAssembly"] = typeof(Web.IndexHtmlInjector).Assembly.FullName!,
+    ["callbackClass"] = typeof(Web.IndexHtmlInjector).FullName,
+    ["callbackMethod"] = nameof(Web.IndexHtmlInjector.Transform),
+};
+register.Invoke(null, new object?[] { payload });
+```
+
+### What to check in logs after deploy
+
+```
+Jellytriggers: registered index.html script injection with File Transformation.
+```
+
+If you see the "File Transformation plugin not detected" message instead,
+the FT plugin isn't installed or hasn't loaded yet. Install it from the
+Jellyfin plugin catalogue and restart.
+
+---
+
 ## What we're building
 
 When a Jellyfin user opens a movie, a small pane appears on the detail page
@@ -101,13 +218,18 @@ Jellytriggers/
 │   ├── Api/
 │   │   ├── DoesTheDogDieClient.cs        # typed HTTP client (X-API-KEY auth)
 │   │   └── Models/                       # DTOs for /dddsearch & /media
+│   │       └── FtPayload.cs              # dead code — do not use as FT callback
+│   │                                     # parameter (see FT learnings above)
 │   ├── Services/
 │   │   ├── TriggerLookupService.cs       # Jellyfin item -> DTDD media id
 │   │   ├── TriggerCache.cs               # disk cache w/ TTL
-│   │   └── UserKeyStore.cs               # per-user DTDD key storage
+│   │   ├── UserKeyStore.cs               # per-user DTDD key storage
+│   │   └── FileTransformationRegistration.cs  # IHostedService that registers
+│   │                                           # the index.html callback with FT
 │   ├── Controllers/
 │   │   └── JellytriggersController.cs    # /Plugins/Jellytriggers/...
 │   └── Web/
+│       ├── IndexHtmlInjector.cs          # FT callback — return string, JObject param
 │       ├── jellytriggers.js              # injected web client script
 │       └── jellytriggers.css
 ├── Jellyfin.Plugin.Jellytriggers.sln
@@ -139,9 +261,11 @@ All under `/Plugins/Jellytriggers/`:
   Side-effect: invalidates that user's pane cache, since a key change implies
   a different identity / different favorites.
 - `DELETE /key`             — Clears it. Also drops the user's pane cache.
-- `GET  /script.js`         — Serves the bundled JS. File Transformation
-  injects a `<script defer src="/Plugins/Jellytriggers/script.js"></script>`
+- `GET  /script.js`         — Serves the bundled JS (anonymous endpoint —
+  browsers can't auth before fetching a script tag). File Transformation
+  injects `<script defer src="/Plugins/Jellytriggers/script.js"></script>`
   into `index.html` automatically.
+- `GET  /style.css`         — Serves the bundled CSS. Also anonymous.
 
 ## Matching Jellyfin items to DTDD media
 
@@ -191,17 +315,33 @@ The admin config page calls out two things:
 
 ## Build / dev workflow
 
+**Important:** The workspace mount path cannot service NuGet restore or `git`
+temp-file operations. Always mirror the source to the sandbox's local
+filesystem before building:
+
 ```bash
-# Build
-dotnet build Jellyfin.Plugin.Jellytriggers.sln
+# Mirror source to sandbox (adjust paths for current session)
+rsync -a /sessions/<session>/mnt/Jellytriggers/ /sessions/<session>/jt-build/
+
+# Build from the local copy
+cd /sessions/<session>/jt-build
+/sessions/<session>/dotnet/dotnet build Jellyfin.Plugin.Jellytriggers.sln
 
 # Publish (produces the DLL we ship)
-dotnet publish -c Release Jellyfin.Plugin.Jellytriggers/
+/sessions/<session>/dotnet/dotnet publish -c Release Jellyfin.Plugin.Jellytriggers/
+```
 
-# Local dev install: copy DLL into Jellyfin's plugins/Jellytriggers/ folder
-# and restart the server. The plugin template README has the exact paths per
-# OS; on macOS it's typically:
-#   ~/Library/Application Support/jellyfin/plugins/Jellytriggers/
+The .NET 9 SDK may need to be installed fresh each session to
+`/sessions/<session>/dotnet/`. Use the official install script.
+
+After a successful publish, copy the DLL and any other artifacts to the
+release directory in the workspace and update `manifest.json`.
+
+```bash
+# Deploy to Jellyfin (macOS path)
+cp Jellyfin.Plugin.Jellytriggers.dll \
+  ~/Library/Application\ Support/jellyfin/plugins/Jellytriggers_<version>/
+# then restart Jellyfin
 ```
 
 The MAL plugin's `.vscode/launch.json` is a good reference if we want to
@@ -224,6 +364,10 @@ updated.
   some form of obfuscation** (Jellyfin user-level config is generally not
   encrypted, but at minimum the value should not appear in logs or in any
   GET response). Treat them like the secrets they are.
+- **Don't use a custom DTO as the FT callback parameter type.** See the "File
+  Transformation integration" section. It will break Jellyfin page serving.
+- **Don't return void from the FT callback.** FT reads the return value as
+  a string. Void → null → NullReferenceException in FT → no injection.
 
 ## Things to verify against a real environment
 
@@ -257,3 +401,5 @@ they should be confirmed once we have a running Jellyfin + plugin:
   https://github.com/valknight/DoesTheDogWatchPlex
 - File Transformation (the install path):
   https://github.com/IAmParadox27/jellyfin-plugin-file-transformation
+- MediaBar plugin (FT callback reference implementation):
+  https://github.com/IAmParadox27/jellyfin-plugin-media-bar

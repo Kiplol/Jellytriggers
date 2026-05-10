@@ -86,12 +86,20 @@ public sealed class FileTransformationRegistration : IHostedService
             return;
         }
 
-        var ourAssemblyName = typeof(Web.IndexHtmlInjector).Assembly.FullName!;
+        // Use the callback approach. FT calls our method via reflection:
+        //   (string)method.Invoke(null, new object[] { paramObj })
+        // where paramObj is whatever it deserialized {"contents":"…"} into.
+        // The callback parameter MUST be JObject — a custom DTO causes a
+        // cross-AssemblyLoadContext type-identity failure (Newtonsoft can't
+        // instantiate our type in FT's context), which propagates past FT's
+        // middleware and breaks Jellyfin page-serving entirely.
+        // JObject is safe because Jellytriggers uses ExcludeAssets=runtime
+        // for Newtonsoft, sharing the host's assembly with FT.
         var payload = new JObject
         {
             ["id"] = TransformationId.ToString("D"),
             ["fileNamePattern"] = "index.html",
-            ["callbackAssembly"] = ourAssemblyName,
+            ["callbackAssembly"] = typeof(Web.IndexHtmlInjector).Assembly.FullName!,
             ["callbackClass"] = typeof(Web.IndexHtmlInjector).FullName,
             ["callbackMethod"] = nameof(Web.IndexHtmlInjector.Transform),
         };
