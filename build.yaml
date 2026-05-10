@@ -1,0 +1,19 @@
+# Build descriptor consumed by jprm (Jellyfin Plugin Repository Manager) when
+# packaging releases. The version, targetAbi, and artifacts list need to stay
+# in sync with the assembly version in the .csproj and the manifest.json
+# entry — automation can read all three from this file.
+name: Jellytriggers
+guid: 58f13d24-a724-409e-a998-f2154ba986d4
+version: 0.1.0.0
+targetAbi: 10.11.3.0
+framework: net9.0
+owner: Kiplol
+category: General
+overview: Personalized Does The Dog Die content warnings on the Jellyfin movie detail page.
+description: |
+  Jellytriggers shows each viewer the trigger questions they have favorited
+  on doesthedogdie.com (and only those) on every movie's detail page. Each
+  user supplies their own DTDD API key; the pane reflects their saved
+  triggers, with vote totals, comment counts, and a manual refresh control.
+artifacts:
+  - Jellyfin.Plugin.Jellytriggers.dll

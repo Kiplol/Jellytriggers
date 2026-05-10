@@ -1,0 +1,172 @@
+/*
+ * Jellytriggers pane styles.
+ *
+ * Every selector is scoped under .jt-* so themed installs (Catppuccin etc.)
+ * can override anything from Jellyfin's Branding -> Custom CSS field without
+ * fighting specificity. We use CSS variables with sensible defaults so a
+ * theme can change tokens centrally rather than per-rule.
+ */
+
+.jt-slot {
+    margin: 1.5em 0;
+}
+
+.jt-pane {
+    --jt-bg: rgba(255, 255, 255, 0.04);
+    --jt-border: rgba(255, 255, 255, 0.10);
+    --jt-fg: inherit;
+    --jt-muted: rgba(255, 255, 255, 0.55);
+    --jt-yes: #e85a4f;
+    --jt-no: #4a9d6e;
+    --jt-link: #5db9ff;
+    --jt-radius: 8px;
+    --jt-pad: 0.9em;
+
+    background: var(--jt-bg);
+    border: 1px solid var(--jt-border);
+    border-radius: var(--jt-radius);
+    color: var(--jt-fg);
+    padding: var(--jt-pad);
+    margin: 0;
+}
+
+.jt-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6em;
+}
+
+.jt-pane-title {
+    margin: 0;
+    font-size: 1.1em;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.jt-refresh {
+    background: transparent;
+    border: 1px solid var(--jt-border);
+    border-radius: 999px;
+    width: 1.8em;
+    height: 1.8em;
+    line-height: 1;
+    color: var(--jt-fg);
+    cursor: pointer;
+    font-size: 1em;
+    padding: 0;
+    transition: transform 120ms ease, background 120ms ease;
+}
+
+.jt-refresh:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.jt-refresh:active {
+    transform: rotate(90deg);
+}
+
+.jt-pane-body {
+    display: block;
+}
+
+.jt-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+}
+
+.jt-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.7em;
+    padding: 0.45em 0;
+    border-bottom: 1px solid var(--jt-border);
+}
+
+.jt-item:last-child {
+    border-bottom: none;
+}
+
+.jt-question {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.jt-verdict-wrap {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4em;
+}
+
+.jt-verdict {
+    display: inline-block;
+    padding: 0.1em 0.55em;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.jt-yes {
+    background: rgba(232, 90, 79, 0.15);
+    color: var(--jt-yes);
+}
+
+.jt-no {
+    background: rgba(74, 157, 110, 0.15);
+    color: var(--jt-no);
+}
+
+.jt-paywalled {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--jt-muted);
+}
+
+.jt-counts {
+    color: var(--jt-muted);
+    font-size: 0.85em;
+}
+
+.jt-link {
+    color: var(--jt-link);
+    text-decoration: none;
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+
+.jt-link:hover {
+    text-decoration: underline;
+}
+
+.jt-state {
+    color: var(--jt-muted);
+    line-height: 1.5;
+}
+
+.jt-state p {
+    margin: 0 0 0.4em 0;
+}
+
+.jt-state a {
+    color: var(--jt-link);
+}
+
+.jt-empty {
+    color: var(--jt-muted);
+    font-style: italic;
+}
+
+.jt-loading-dot {
+    color: var(--jt-muted);
+    font-size: 1.5em;
+    line-height: 1;
+}
+
+.jt-error {
+    color: var(--jt-yes);
+}

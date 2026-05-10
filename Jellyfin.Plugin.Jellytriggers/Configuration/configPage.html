@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Jellytriggers</title>
+</head>
+<body>
+  <div id="JellytriggersConfigPage"
+       data-role="page"
+       class="page type-interior pluginConfigurationPage"
+       data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+      <div class="content-primary">
+
+        <div class="verticalSection">
+          <div class="sectionTitleContainer flex align-items-center">
+            <h2 class="sectionTitle">Jellytriggers</h2>
+          </div>
+          <p>
+            Surfaces personalized
+            <a is="emby-linkbutton" class="button-link" href="https://www.doesthedogdie.com/" target="_blank" rel="noopener">Does The Dog Die</a>
+            content warnings on the movie detail page, filtered to each viewer's saved triggers.
+          </p>
+        </div>
+
+        <div class="verticalSection">
+          <h3 class="sectionTitle">Step 1 &mdash; install File Transformation</h3>
+          <p>
+            Jellytriggers loads its pane through the
+            <a is="emby-linkbutton" class="button-link" href="https://github.com/IAmParadox27/jellyfin-plugin-file-transformation" target="_blank" rel="noopener">File&nbsp;Transformation</a>
+            plugin. With it installed, Jellytriggers automatically registers its
+            <code>index.html</code> hook on server startup &mdash; no script tags
+            to paste, no <code>jellyfin-web</code> files to edit.
+          </p>
+          <p>
+            Add <code>https://www.iamparadox.dev/jellyfin/plugins/manifest.json</code>
+            as a plugin repository in
+            <em>Settings &rarr; Plugins &rarr; Repositories</em>, install
+            <em>File Transformation</em> from the catalogue, then restart your
+            Jellyfin server. After the restart, refresh this page and you should
+            see &ldquo;detected&rdquo; below.
+          </p>
+          <div id="JellytriggersFtStatus" class="fieldDescription"></div>
+        </div>
+
+        <div class="verticalSection">
+          <h3 class="sectionTitle">Step 2 &mdash; tell each viewer to add their DTDD API key</h3>
+          <p>
+            Each Jellyfin user supplies their own
+            <a is="emby-linkbutton" class="button-link" href="https://www.doesthedogdie.com/api" target="_blank" rel="noopener">DTDD API key</a>
+            (DTDD will personalize responses to that key's account). Once the script tag above
+            is loaded, the pane on any movie page will prompt the viewer to set their key the
+            first time it appears.
+          </p>
+          <p>
+            There is intentionally no in-Jellyfin category picker &mdash; viewers curate their
+            triggers on doesthedogdie.com itself, and Jellytriggers honors whatever they have
+            marked there.
+          </p>
+        </div>
+
+        <form class="jellytriggersConfigForm">
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Cache settings</h3>
+
+            <div class="inputContainer">
+              <input is="emby-input" type="number" min="1" max="365"
+                     id="ResolutionCacheHitTtlDays"
+                     label="Resolved-id cache TTL (days)" />
+              <div class="fieldDescription">
+                How long to remember the Jellyfin-item &rarr; DTDD-media-id mapping for a hit.
+                Default 30 days.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <input is="emby-input" type="number" min="1" max="365"
+                     id="ResolutionCacheMissTtlDays"
+                     label="Negative-resolution TTL (days)" />
+              <div class="fieldDescription">
+                How long to remember &ldquo;not on DTDD&rdquo; before re-trying. Default 7 days.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <input is="emby-input" type="number" min="1" max="720"
+                     id="PaneCacheTtlHours"
+                     label="Pane payload TTL (hours)" />
+              <div class="fieldDescription">
+                How long to cache the per-user filtered pane content. Lower values pick up
+                changes the user makes on doesthedogdie.com sooner. Default 24 hours.
+              </div>
+            </div>
+
+            <label class="checkboxContainer">
+              <input is="emby-checkbox" type="checkbox" id="AllowTitleSearchFallback" />
+              <span>Allow title-search fallback when no TMDB/IMDb id is present</span>
+            </label>
+          </div>
+
+          <div>
+            <button is="emby-button" type="submit" class="raised button-submit block">
+              <span>Save</span>
+            </button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+
+    <script type="text/javascript">
+      (function () {
+        var pluginId = '58f13d24-a724-409e-a998-f2154ba986d4';
+
+        document.querySelector('#JellytriggersConfigPage')
+          .addEventListener('pageshow', function () {
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+              document.querySelector('#ResolutionCacheHitTtlDays').value =
+                  config.ResolutionCacheHitTtlDays;
+              document.querySelector('#ResolutionCacheMissTtlDays').value =
+                  config.ResolutionCacheMissTtlDays;
+              document.querySelector('#PaneCacheTtlHours').value =
+                  config.PaneCacheTtlHours;
+              document.querySelector('#AllowTitleSearchFallback').checked =
+                  !!config.AllowTitleSearchFallback;
+              Dashboard.hideLoadingMsg();
+            });
+          });
+
+        document.querySelector('.jellytriggersConfigForm')
+          .addEventListener('submit', function (e) {
+            e.preventDefault();
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+              config.ResolutionCacheHitTtlDays  = parseInt(document.querySelector('#ResolutionCacheHitTtlDays').value, 10);
+              config.ResolutionCacheMissTtlDays = parseInt(document.querySelector('#ResolutionCacheMissTtlDays').value, 10);
+              config.PaneCacheTtlHours          = parseInt(document.querySelector('#PaneCacheTtlHours').value, 10);
+              config.AllowTitleSearchFallback   = document.querySelector('#AllowTitleSearchFallback').checked;
+              ApiClient.updatePluginConfiguration(pluginId, config).then(Dashboard.processPluginConfigurationUpdateResult);
+            });
+            return false;
+          });
+      })();
+    </script>
+  </div>
+</body>
+</html>

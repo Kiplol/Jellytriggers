@@ -31,19 +31,28 @@ DTDD as a data source.
 
 A short list of decisions and the reasoning, so we don't relitigate them.
 
-- **C# / .NET 8 plugin, packaged as a DLL.** This is how Jellyfin plugins are
+- **C# / .NET 9 plugin, packaged as a DLL.** This is how Jellyfin plugins are
   built; the official template and most existing plugins (incl. the MAL plugin
   we used as a shape reference) follow this pattern. Distributed via a
   `manifest.json` repo URL the user adds in the Jellyfin dashboard.
+  (NB: the template README still says .NET 8, but the current Jellyfin
+  10.11.3 NuGet packages target .NET 9; we follow the packages.)
 - **Per-user DTDD API keys.** Each Jellyfin user enters their own DTDD key.
   This is the right model because DTDD personalizes its responses per key
   (see "How DTDD personalization works" below) — using a single shared key
   would lose the per-user filtering entirely.
-- **Pane delivered via injected JS, loaded with a one-line script tag.** The
-  plugin ships a JS+CSS bundle. The admin adds one `<script>` tag to Jellyfin's
-  web config (or installs the JavaScript Injector plugin). We considered
-  auto-patching `index.html` but rejected it — invasive and breaks across
-  Jellyfin updates.
+- **Pane delivered via injected JS, loaded by File Transformation.** The
+  plugin ships a JS+CSS bundle and, on startup, registers an `index.html`
+  transformation with the
+  [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)
+  (via reflection — FT can't be linked directly). With File Transformation
+  installed, the pane loads with zero admin setup. We deliberately don't
+  auto-patch jellyfin-web's files on disk — invasive, breaks across Jellyfin
+  updates, and File Transformation already does the right thing without that
+  cost. A manual `<script defer src="/Plugins/Jellytriggers/script.js"></script>`
+  added to the web client also works for installs that don't run File
+  Transformation, but it's not the supported path and isn't documented in
+  the admin UI.
 - **No in-Jellyfin category picker.** Users curate their trigger list on
   doesthedogdie.com; we honor it via the API. Less UI to build, and the source
   of truth lives where it's expected to live.
@@ -130,8 +139,9 @@ All under `/Plugins/Jellytriggers/`:
   Side-effect: invalidates that user's pane cache, since a key change implies
   a different identity / different favorites.
 - `DELETE /key`             — Clears it. Also drops the user's pane cache.
-- `GET  /script.js`         — Serves the bundled JS so admins can load it with
-  a single script tag.
+- `GET  /script.js`         — Serves the bundled JS. File Transformation
+  injects a `<script defer src="/Plugins/Jellytriggers/script.js"></script>`
+  into `index.html` automatically.
 
 ## Matching Jellyfin items to DTDD media
 
@@ -170,8 +180,14 @@ on-demand because it's per-user.
   everywhere" button that calls `POST /refresh`. No category picker —
   favorites come from DTDD.
 
-The admin config page should also display the one-line `<script>` snippet
-the admin needs to paste into Jellyfin's web config to load the pane.
+The admin config page calls out two things:
+
+1. That File Transformation is required and links to its repository. We display
+   detected/not-detected status pulled from `FileTransformationRegistration`'s
+   last result so the admin can see at a glance whether the pane will load.
+2. A note that themed installs (Catppuccin etc.) can restyle the pane via the
+   server's Branding → Custom CSS field — every pane element ships with a
+   stable `jt-*` class.
 
 ## Build / dev workflow
 
@@ -220,9 +236,12 @@ they should be confirmed once we have a running Jellyfin + plugin:
   template's `BasePluginConfiguration` is server-wide; per-user data may need
   a custom store or a small EFCore use of Jellyfin's user data tables.
 - DTDD rate limits (not documented publicly) — start conservative, log 429s.
-- Whether the web client's `index.html` actually honors the script tag in the
-  Jellyfin server config across versions, or whether we need the JS Injector
-  plugin path.
+- That File Transformation's reflection contract still matches when the
+  plugin updates (we discover it by `AssemblyLoadContext` and invoke
+  `Jellyfin.Plugin.FileTransformation.PluginInterface.RegisterTransformation`).
+  If FT renames or re-shapes that surface, our `FileTransformationRegistration`
+  hosted service logs and degrades gracefully, but the pane stops loading
+  until we adapt.
 
 ## Reference
 
@@ -236,5 +255,5 @@ they should be confirmed once we have a running Jellyfin + plugin:
   https://github.com/ryandash/jellyfin-plugin-myanimelist
 - Plex equivalent for prior art:
   https://github.com/valknight/DoesTheDogWatchPlex
-- JS Injection patterns:
-  https://github.com/n00bcodr/Jellyfin-JavaScript-Injector
+- File Transformation (the install path):
+  https://github.com/IAmParadox27/jellyfin-plugin-file-transformation

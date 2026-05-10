@@ -1,0 +1,23 @@
+<Project>
+  <!--
+    Shared MSBuild defaults for every project in this repo.
+    Mirrors what the official Jellyfin plugin template ships, with a few
+    deliberate choices spelled out:
+      * net9.0 — Jellyfin 10.11.3's NuGet packages target .NET 9.
+      * Nullable enabled — flushes out a class of bugs early.
+      * ImplicitUsings disabled — we'd rather see explicit `using` lines so
+        future readers (incl. future-Claude) don't have to guess where types
+        come from.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

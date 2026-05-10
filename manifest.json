@@ -1,0 +1,12 @@
+[
+  {
+    "category": "General",
+    "guid": "58f13d24-a724-409e-a998-f2154ba986d4",
+    "name": "Jellytriggers",
+    "description": "Surfaces personalized Does The Dog Die content warnings on the Jellyfin movie detail page.",
+    "owner": "Kiplol",
+    "overview": "Personalized Does The Dog Die content warnings on the Jellyfin movie detail page.",
+    "imageUrl": "https://raw.githubusercontent.com/Kiplol/Jellytriggers/main/icon.png",
+    "versions": []
+  }
+]
